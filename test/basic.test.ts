@@ -458,6 +458,74 @@ describe('pages', () => {
     expect(response).not.toContain('don\'t look at this')
     expect(response).toContain('OH NNNNNNOOOOOOOOOOO')
   })
+
+  it('client only page', async () => {
+    const response = await fetch('/client-only').then(r => r.text())
+
+    // Should not contain rendered page on initial request
+    expect(response).not.toContain('"hasAccessToWindow": true')
+    expect(response).not.toContain('"isServer": false')
+
+    const errors: string[] = []
+    const { page: clientInitialPage } = await renderPage('/client-only-page')
+
+    clientInitialPage.on('console', (message) => {
+      const type = message.type()
+      if (type === 'error' || type === 'warning') {
+        errors.push(message.text())
+      }
+    })
+
+    // But after hydration element should appear and contain this object
+    expect(await clientInitialPage.locator('#state').textContent()).toMatchInlineSnapshot(`
+      "{
+        "hasAccessToWindow": true,
+        "isServer": false
+      }"
+    `)
+
+    expect(await clientInitialPage.locator('#server-rendered').textContent()).toMatchInlineSnapshot(`"false"`)
+
+    // Then go to non client only page
+    await clientInitialPage.click('a')
+    await new Promise((r) => setTimeout(r, 50)) // little delay to finish transition
+
+    // that page should be client rendered
+    expect(await clientInitialPage.locator('#server-rendered').textContent()).toMatchInlineSnapshot(`"false"`)
+    // and not contain any errors or warnings
+    expect(errors.length).toBe(0)
+
+    await clientInitialPage.close()
+    errors.length = 0
+
+    const { page: normalInitialPage } = await renderPage('/client-only-page/normal')
+
+    normalInitialPage.on('console', (message) => {
+      const type = message.type()
+      if (type === 'error' || type === 'warning') {
+        errors.push(message.text())
+      }
+    })
+
+    // Now non client only page should be sever rendered
+    expect(await normalInitialPage.locator('#server-rendered').textContent()).toMatchInlineSnapshot(`"true"`)
+
+    // Go to client only page
+    await normalInitialPage.click('a')
+
+    // and expect same object to be present
+    expect(await normalInitialPage.locator('#state').textContent()).toMatchInlineSnapshot(`
+      "{
+        "hasAccessToWindow": true,
+        "isServer": false
+      }"
+    `)
+
+    // also there should not be any errors
+    expect(errors.length).toBe(0)
+
+    await normalInitialPage.close()
+  })
 })
 
 describe('nuxt composables', () => {
@@ -1986,6 +2054,7 @@ describe('component islands', () => {
         link.href = link.href.replace(fixtureDir, '/<rootDir>').replaceAll('//', '/')
         link.key = link.key.replace(/-[a-zA-Z0-9]+$/, '')
       }
+      result.head.link.sort((a, b) => b.href.localeCompare(a.href))
     }
 
     // TODO: fix rendering of styles in webpack
@@ -2089,6 +2158,17 @@ describe('component islands', () => {
 
     await startServer()
   })
+
+  it('render island page', async () => {
+    const { page } = await renderPage('/')
+
+    const islandPageRequest = page.waitForRequest((req) => {
+      return req.url().includes('/__nuxt_island/page:server-page')
+    })
+    await page.getByText('to server page').click()
+    await islandPageRequest
+    await page.locator('#server-page').waitFor()
+  })
 })
 
 describe.runIf(isDev() && !isWebpack)('vite plugins', () => {
@@ -2122,11 +2202,11 @@ describe.skipIf(isDev() || isWindows || !isRenderingJson)('payload rendering', (
     await gotoPath(page, '/random/a')
 
     // We are manually prefetching other payloads
-    await page.waitForRequest(url('/random/c/_payload.json'))
+    await page.waitForRequest(request => request.url().includes('/random/c/_payload.json'))
 
     // We are not triggering API requests in the payload
-    expect(requests).not.toContain(expect.stringContaining('/api/random'))
-    expect(requests).not.toContain(expect.stringContaining('/__nuxt_island'))
+    expect(requests).not.toContainEqual(expect.stringContaining('/api/random'))
+    expect(requests).not.toContainEqual(expect.stringContaining('/__nuxt_island'))
     // requests.length = 0
 
     await page.click('[href="/random/b"]')
@@ -2134,10 +2214,10 @@ describe.skipIf(isDev() || isWindows || !isRenderingJson)('payload rendering', (
 
     // We are not triggering API requests in the payload in client-side nav
     expect(requests).not.toContain('/api/random')
-    expect(requests).not.toContain(expect.stringContaining('/__nuxt_island'))
+    expect(requests).not.toContainEqual(expect.stringContaining('/__nuxt_island'))
 
     // We are fetching a payload we did not prefetch
-    expect(requests).toContain('/random/b/_payload.json')
+    expect(requests).toContainEqual(expect.stringContaining('/random/b/_payload.json'))
 
     // We are not refetching payloads we've already prefetched
     // expect(requests.filter(p => p.includes('_payload')).length).toBe(1)
@@ -2148,7 +2228,7 @@ describe.skipIf(isDev() || isWindows || !isRenderingJson)('payload rendering', (
 
     // We are not triggering API requests in the payload in client-side nav
     expect(requests).not.toContain('/api/random')
-    expect(requests).not.toContain(expect.stringContaining('/__nuxt_island'))
+    expect(requests).not.toContainEqual(expect.stringContaining('/__nuxt_island'))
 
     // We are not refetching payloads we've already prefetched
     // Note: we refetch on dev as urls differ between '' and '?import'

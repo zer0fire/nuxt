@@ -8,7 +8,6 @@ import { hash } from 'ohash'
 import { camelCase } from 'scule'
 import { filename } from 'pathe/utils'
 import type { NuxtTemplate } from 'nuxt/schema'
-import { tryResolveModule } from '@nuxt/kit'
 
 import { annotatePlugins, checkForCircularDependencies } from './app'
 
@@ -49,7 +48,7 @@ export const errorComponentTemplate: NuxtTemplate = {
 // TODO: Use an alias
 export const testComponentWrapperTemplate: NuxtTemplate = {
   filename: 'test-component-wrapper.mjs',
-  getContents: (ctx) => genExport(resolve(ctx.nuxt.options.appDir, 'components/test-component-wrapper'), ['default'])
+  getContents: ctx => genExport(resolve(ctx.nuxt.options.appDir, 'components/test-component-wrapper'), ['default'])
 }
 
 export const cssTemplate: NuxtTemplate = {
@@ -223,14 +222,14 @@ export const middlewareTemplate: NuxtTemplate = {
 
 export const nitroSchemaTemplate: NuxtTemplate = {
   filename: 'types/nitro-nuxt.d.ts',
-  async getContents ({ nuxt }) {
-    const localH3 = await tryResolveModule('h3', nuxt.options.modulesDir) || 'h3'
+  getContents () {
     return /* typescript */`
 /// <reference path="./schema.d.ts" />
 
 import type { RuntimeConfig } from 'nuxt/schema'
-import type { H3Event } from '${localH3}'
-import type { NuxtIslandContext, NuxtIslandResponse, NuxtRenderHTMLContext } from 'nuxt/dist/core/runtime/nitro/renderer'
+import type { H3Event } from 'h3'
+import type { LogObject } from 'consola'
+import type { NuxtIslandContext, NuxtIslandResponse, NuxtRenderHTMLContext } from 'nuxt/app'
 
 declare module 'nitropack' {
   interface NitroRuntimeConfigApp {
@@ -247,6 +246,7 @@ declare module 'nitropack' {
     experimentalNoScripts?: boolean
   }
   interface NitroRuntimeHooks {
+    'dev:ssr-logs': (ctx: { logs: LogObject[], path: string }) => void | Promise<void>
     'render:html': (htmlContext: NuxtRenderHTMLContext, context: { event: H3Event }) => void | Promise<void>
     'render:island': (islandResponse: NuxtIslandResponse, context: { event: H3Event, islandContext: NuxtIslandContext }) => void | Promise<void>
   }
@@ -264,11 +264,10 @@ export const useRuntimeConfig = () => window?.__NUXT__?.config || {}
 
 export const appConfigDeclarationTemplate: NuxtTemplate = {
   filename: 'types/app.config.d.ts',
-  async getContents ({ app, nuxt }) {
-    const localDefu = await tryResolveModule('defu', nuxt.options.modulesDir) || 'defu'
+  getContents ({ app, nuxt }) {
     return `
 import type { CustomAppConfig } from 'nuxt/schema'
-import type { Defu } from '${localDefu}'
+import type { Defu } from 'defu'
 ${app.configs.map((id: string, index: number) => `import ${`cfg${index}`} from ${JSON.stringify(id.replace(/(?<=\w)\.\w+$/g, ''))}`).join('\n')}
 
 declare const inlineConfig = ${JSON.stringify(nuxt.options.appConfig, null, 2)}
@@ -302,11 +301,10 @@ declare module '@nuxt/schema' {
 export const appConfigTemplate: NuxtTemplate = {
   filename: 'app.config.mjs',
   write: true,
-  async getContents ({ app, nuxt }) {
-    const localDefu = await tryResolveModule('defu', nuxt.options.modulesDir) || 'defu'
+  getContents ({ app, nuxt }) {
     return `
 import { updateAppConfig } from '#app/config'
-import { defuFn } from '${localDefu}'
+import { defuFn } from 'defu'
 
 const inlineConfig = ${JSON.stringify(nuxt.options.appConfig, null, 2)}
 
@@ -328,7 +326,7 @@ export const publicPathTemplate: NuxtTemplate = {
   filename: 'paths.mjs',
   getContents ({ nuxt }) {
     return [
-      'import { joinURL } from \'ufo\'',
+      'import { joinRelativeURL as joinURL } from \'ufo\'',
       !nuxt.options.dev && 'import { useRuntimeConfig } from \'#internal/nitro\'',
 
       nuxt.options.dev
@@ -378,17 +376,21 @@ export const nuxtConfigTemplate: NuxtTemplate = {
       baseURL: undefined,
       headers: undefined
     }
+    const shouldEnableComponentIslands = ctx.nuxt.options.experimental.componentIslands && (
+      ctx.nuxt.options.dev || ctx.nuxt.options.experimental.componentIslands !== 'auto' || ctx.app.pages?.some(p => p.mode === 'server') || ctx.app.components?.some(c => c.mode === 'server')
+    )
     return [
       ...Object.entries(ctx.nuxt.options.app).map(([k, v]) => `export const ${camelCase('app-' + k)} = ${JSON.stringify(v)}`),
       `export const renderJsonPayloads = ${!!ctx.nuxt.options.experimental.renderJsonPayloads}`,
-      `export const componentIslands = ${!!ctx.nuxt.options.experimental.componentIslands}`,
+      `export const componentIslands = ${shouldEnableComponentIslands}`,
       `export const payloadExtraction = ${!!ctx.nuxt.options.experimental.payloadExtraction}`,
       `export const cookieStore = ${!!ctx.nuxt.options.experimental.cookieStore}`,
       `export const appManifest = ${!!ctx.nuxt.options.experimental.appManifest}`,
       `export const remoteComponentIslands = ${typeof ctx.nuxt.options.experimental.componentIslands === 'object' && ctx.nuxt.options.experimental.componentIslands.remoteIsland}`,
-      `export const selectiveClient = ${typeof ctx.nuxt.options.experimental.componentIslands === 'object' && ctx.nuxt.options.experimental.componentIslands.selectiveClient}`,
+      `export const selectiveClient = ${typeof ctx.nuxt.options.experimental.componentIslands === 'object' && Boolean(ctx.nuxt.options.experimental.componentIslands.selectiveClient)}`,
       `export const devPagesDir = ${ctx.nuxt.options.dev ? JSON.stringify(ctx.nuxt.options.dir.pages) : 'null'}`,
       `export const devRootDir = ${ctx.nuxt.options.dev ? JSON.stringify(ctx.nuxt.options.rootDir) : 'null'}`,
+      `export const devLogs = ${JSON.stringify(ctx.nuxt.options.features.devLogs)}`,
       `export const nuxtLinkDefaults = ${JSON.stringify(ctx.nuxt.options.experimental.defaults.nuxtLink)}`,
       `export const asyncDataDefaults = ${JSON.stringify(ctx.nuxt.options.experimental.defaults.useAsyncData)}`,
       `export const fetchDefaults = ${JSON.stringify(fetchDefaults)}`,

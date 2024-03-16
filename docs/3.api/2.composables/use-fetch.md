@@ -144,11 +144,11 @@ type UseFetchOptions<DataT> = {
   server?: boolean
   lazy?: boolean
   immediate?: boolean
-  getCachedData?: (key: string) => DataT
+  getCachedData?: (key: string, nuxtApp: NuxtApp) => DataT
   deep?: boolean
   dedupe?: 'cancel' | 'defer'
   default?: () => DataT
-  transform?: (input: DataT) => DataT
+  transform?: (input: DataT) => DataT | Promise<DataT>
   pick?: string[]
   watch?: WatchSource[] | false
 }
